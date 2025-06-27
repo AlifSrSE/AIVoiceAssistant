@@ -455,9 +455,6 @@ def maps_search():
 
 @app.route('/downloads/<filename>')
 def serve_downloaded_file(filename):
-    """
-    Serves a file from the 'downloads' directory.
-    """
     return send_from_directory(DOWNLOADS_DIR, filename)
 
 if __name__ == '__main__':
