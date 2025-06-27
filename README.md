@@ -193,6 +193,7 @@ Once both the backend and frontend are running:
 
 ## 📂 Project Structure
 
+```
 ai-voice-assistant/
 ├── ai-voice-assistant-backend/
 │   ├── venv/                   # Python virtual environment
@@ -210,6 +211,8 @@ ai-voice-assistant/
 │   ├── tailwind.config.js      # Tailwind CSS configuration
 │   └── ...
 └── README.md
+```
+
 
 ## 💡 Future Enhancements
 
