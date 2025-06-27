@@ -5,6 +5,9 @@ import os
 import wikipediaapi
 from PyDictionary import PyDictionary
 from spellchecker import SpellChecker
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 CORS(app)
@@ -19,6 +22,11 @@ BASE_NEWS_URL = "https://newsapi.org/v2/top-headlines"
 
 YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'YOUR_YOUTUBE_API_KEY_HERE')
 BASE_YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'your_sender_email@example.com')
+SENDER_PASSWORD = os.environ.get('SENDER_PASSWORD', 'your_email_app_password')
+SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com') # For Gmail
+SMTP_PORT = int(os.environ.get('SMTP_PORT', 587)) # 587 for TLS, 465 for SSL
 
 # --- API Endpoints ---
 
@@ -286,5 +294,50 @@ def youtube_search():
         print(f"An unknown error occurred during YouTube search: {e}")
         return jsonify({"error": f"An unknown server error occurred: {e}"}), 500
     
+@app.route('/send-email', methods=['POST'])
+def send_email():
+    data = request.get_json()
+    recipient_email = data.get('recipient_email')
+    subject = data.get('subject')
+    body = data.get('body')
+
+    if not all([recipient_email, subject, body]):
+        return jsonify({"error": "Missing recipient_email, subject, or body"}), 400
+
+    if not SENDER_EMAIL or SENDER_EMAIL == 'your_sender_email@example.com' or \
+       not SENDER_PASSWORD or SENDER_PASSWORD == 'your_email_app_password':
+        print("Warning: Email sender credentials are not set. Cannot send email.")
+        return jsonify({"error": "Email sender credentials not configured on the server."}), 500
+
+    msg = MIMEMultipart()
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = recipient_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(SENDER_EMAIL, recipient_email, text)
+        server.quit()
+
+        print(f"Email sent successfully to {recipient_email}")
+        return jsonify({"message": "Email sent successfully!"}), 200
+
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"SMTP Authentication Error: {e}")
+        return jsonify({"error": "Failed to authenticate with email server. Check sender credentials."}), 500
+    except smtplib.SMTPConnectError as e:
+        print(f"SMTP Connection Error: {e}")
+        return jsonify({"error": "Failed to connect to email server. Check SMTP server/port or network."}), 500
+    except smtplib.SMTPException as e:
+        print(f"SMTP Error: {e}")
+        return jsonify({"error": f"An SMTP error occurred: {e}"}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred during email sending: {e}")
+        return jsonify({"error": f"An unknown server error occurred: {e}"}), 500
+        
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

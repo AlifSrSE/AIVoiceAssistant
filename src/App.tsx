@@ -49,6 +49,8 @@ const App = () => {
     const [youtubeResults, setYoutubeResults] = useState<any[]>([]);
     const [loadingYouTube, setLoadingYouTube] = useState(false);
     const [currentPlayingVideoId, setCurrentPlayingVideoId] = useState<string | null>(null);
+    const [sendingEmail, setSendingEmail] = useState(false);
+    const [emailStatusMessage, setEmailStatusMessage] = useState<string | null>(null);
 
     const recognitionRef = useRef<any>(null);
     const dbRef = useRef<any>(null);
@@ -68,7 +70,7 @@ const App = () => {
         };
     }, []);
 
-    // Function to speak text using SpeechSynthesis API
+    // Speak text using SpeechSynthesis API
     const speak = (text: string, voiceName?: string) => {
         if (!window.speechSynthesis) {
           setAssistantResponse('Speech synthesis is not supported in this browser.');
@@ -96,7 +98,7 @@ const App = () => {
         window.speechSynthesis.speak(utterance);
     };
 
-    // Function to fetch weather data from the Python backend
+    // Weather data from the Python backend
     const fetchWeather = async (city: string) => {
         setLoadingWeather(true);
         setAssistantResponse(`Fetching weather for ${city}...`);
@@ -124,7 +126,7 @@ const App = () => {
         }
     };
 
-    // Function to fetch news data from the Python backend
+    // News data from the Python backend
     const fetchNews = async (query: string = '') => {
         setLoadingNews(true);
         setNewsArticles([]);
@@ -158,7 +160,7 @@ const App = () => {
         }
     };
 
-    // Function to fetch Wikipedia data from the Python backend
+    // Wikipedia data from the Python backend
     const fetchWikipedia = async (query: string) => {
         setLoadingWikipedia(true);
         setWikipediaData(null);
@@ -187,7 +189,7 @@ const App = () => {
         }
     };
 
-    // Function to fetch dictionary definition from the Python backend
+    // Dictionary definition from the Python backend
     const fetchDictionaryDefinition = async (word: string) => {
         setLoadingDictionary(true);
         setDictionaryData(null);
@@ -226,7 +228,7 @@ const App = () => {
         }
     };
 
-    // Function to fetch YouTube videos from the Python backend
+    // YouTube videos from the Python backend
     const fetchYouTubeVideos = async (query: string, autoPlayFirst: boolean = false) => {
         setLoadingYouTube(true);
         setYoutubeResults([]);
@@ -258,6 +260,41 @@ const App = () => {
             setYoutubeResults([]);
         } finally {
             setLoadingYouTube(false);
+        }
+    };
+    
+    // Send an email via the Python backend
+    const sendEmailCommand = async (recipient: string, subject: string, body: string) => {
+        setSendingEmail(true);
+        setEmailStatusMessage(null); // Clear previous status
+        setAssistantResponse(`Sending email to ${recipient}...`);
+        speak(`Sending email to ${recipient}...`);
+        try {
+            const response = await fetch(`${BACKEND_URL}/send-email`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ recipient_email: recipient, subject: subject, body: body }),
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                setEmailStatusMessage(`Email sent successfully to ${recipient}!`);
+                setAssistantResponse(`Email sent successfully to ${recipient}!`);
+                speak(`Email sent successfully to ${recipient}!`);
+            } else {
+                setEmailStatusMessage(`Failed to send email: ${data.error || 'Unknown error.'}`);
+                setAssistantResponse(`Failed to send email: ${data.error || 'Unknown error.'}`);
+                speak(`Failed to send email: ${data.error || 'Unknown error.'}`);
+            }
+        } catch (error) {
+            console.error("Error sending email:", error);
+            setEmailStatusMessage("There was a problem connecting to the email service. Please ensure the backend is running and configured correctly.");
+            setAssistantResponse("There was a problem connecting to the email service. Please ensure the backend is running and configured correctly.");
+            speak("There was a problem connecting to the email service. Please ensure the backend is running and configured correctly.");
+        } finally {
+            setSendingEmail(false);
         }
     };
 
@@ -503,6 +540,19 @@ const App = () => {
                 setAssistantResponse(response);
                 speak(response);
             }
+        } else if (lowerCommand.includes('send an email to')) {
+            const emailMatch = lowerCommand.match(/send an email to\s+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s+with subject\s+(.+?)\s+and message\s+(.+)/);
+
+            if (emailMatch && emailMatch[1] && emailMatch[2] && emailMatch[3]) {
+                const recipient = emailMatch[1].trim();
+                const subject = emailMatch[2].trim();
+                const body = emailMatch[3].trim();
+                sendEmailCommand(recipient, subject, body);
+            } else {
+                response = "I couldn't understand the email command. Please say 'send an email to [recipient email] with subject [subject] and message [body]'.";
+                setAssistantResponse(response);
+                speak(response);
+            }
         } else if (lowerCommand.includes('switch to female voice')) {
         const femaleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('female') && voice.lang === 'en-US');
           if (femaleVoice) {
@@ -646,7 +696,7 @@ const App = () => {
                         AI Voice Assistant
                     </h1>
                     <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
-                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary || loadingYouTube ? (
+                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary || loadingYouTube || sendingEmail ? (
                             <div className="flex items-center space-x-2">
                                 <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -843,6 +893,15 @@ const App = () => {
                                 </li>
                             ))}
                         </ul>
+                    </div>
+                )}
+
+                {/* Email Status Display */}
+                {emailStatusMessage && (
+                    <div className={`rounded-xl p-4 mb-8 text-center font-semibold ${
+                        emailStatusMessage.includes('successfully') ? 'bg-green-700 bg-opacity-50 text-green-100' : 'bg-red-700 bg-opacity-50 text-red-100'
+                    } shadow-xl border border-gray-600`}>
+                        {sanitizeText(emailStatusMessage)}
                     </div>
                 )}
 
