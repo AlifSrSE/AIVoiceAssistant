@@ -3,9 +3,13 @@ from flask_cors import CORS
 import requests
 import os
 import wikipediaapi
+from PyDictionary import PyDictionary
+from spellchecker import SpellChecker
 
 app = Flask(__name__)
 CORS(app)
+dictionary = PyDictionary()
+spell = SpellChecker()
 
 OPENWEATHER_API_KEY = os.environ.get('OPENWEATHER_API_KEY', 'YOUR_OPENWEATHER_API_KEY_HERE')
 BASE_WEATHER_URL = "http://api.openweathermap.org/data/2.5/weather"
@@ -182,6 +186,46 @@ def get_wikipedia_summary():
     except Exception as e:
         print(f"An error occurred during Wikipedia query: {e}")
         return jsonify({"error": f"An internal server error occurred: {e}"}), 500
+    
+    
+@app.route('/dictionary', methods=['GET'])
+def get_word_definition():
+    word_query = request.args.get('word')
+    if not word_query:
+        return jsonify({"error": "Word parameter is required"}), 400
+
+    corrected_word = spell.correction(word_query)
+    is_misspelled = False
+    if corrected_word and corrected_word.lower() != word_query.lower():
+        is_misspelled = True
+        word_to_define = corrected_word
+    else:
+        word_to_define = word_query
+
+    definitions = None
+    try:
+        definitions = dictionary.meaning(word_to_define)
+    except Exception as e:
+        print(f"Error fetching definition for {word_to_define}: {e}")
+        definitions = None
+
+    if definitions:
+        formatted_definitions = []
+        for part_of_speech, def_list in definitions.items():
+            formatted_definitions.append({
+                "part_of_speech": part_of_speech,
+                "meanings": def_list
+            })
+        return jsonify({
+            "original_word": word_query,
+            "corrected_word": corrected_word if is_misspelled else None,
+            "definitions": formatted_definitions
+        }), 200
+    else:
+        if is_misspelled:
+            return jsonify({"error": f"Could not find definitions for '{word_query}'. Did you mean '{corrected_word}'?", "suggestion": corrected_word}), 404
+        else:
+            return jsonify({"error": f"Could not find definitions for '{word_query}'."}), 404
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

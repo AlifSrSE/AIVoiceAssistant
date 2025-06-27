@@ -44,6 +44,8 @@ const App = () => {
     const [loadingNews, setLoadingNews] = useState(false);
     const [wikipediaData, setWikipediaData] = useState<any>(null);
     const [loadingWikipedia, setLoadingWikipedia] = useState(false);
+    const [dictionaryData, setDictionaryData] = useState<any>(null);
+    const [loadingDictionary, setLoadingDictionary] = useState(false);
 
     const recognitionRef = useRef<any>(null);
     const dbRef = useRef<any>(null);
@@ -179,6 +181,45 @@ const App = () => {
             setWikipediaData(null);
         } finally {
             setLoadingWikipedia(false);
+        }
+    };
+
+    // Function to fetch dictionary definition from the Python backend
+    const fetchDictionaryDefinition = async (word: string) => {
+        setLoadingDictionary(true);
+        setDictionaryData(null);
+        setAssistantResponse(`Looking up "${word}" in the dictionary...`);
+        try {
+            const response = await fetch(`${BACKEND_URL}/dictionary?word=${encodeURIComponent(word)}`);
+            const data = await response.json();
+
+            if (response.ok && data.definitions && data.definitions.length > 0) {
+                setDictionaryData(data);
+                let textResponse = '';
+                if (data.corrected_word) {
+                    textResponse = `Did you mean "${data.corrected_word}"? The definition of ${data.corrected_word} is: `;
+                } else {
+                    textResponse = `The definition of ${data.original_word} is: `;
+                }
+                textResponse += data.definitions[0].meanings[0];
+                setAssistantResponse(textResponse);
+                speak(textResponse);
+            } else {
+                let errorResponse = `Sorry, I couldn't find a definition for "${word}".`;
+                if (data.suggestion) {
+                    errorResponse += ` Did you mean "${data.suggestion}"?`;
+                }
+                setAssistantResponse(errorResponse);
+                speak(errorResponse);
+                setDictionaryData(null);
+            }
+        } catch (error) {
+            console.error("Error fetching dictionary data:", error);
+            setAssistantResponse("There was a problem connecting to the dictionary service. Please ensure the backend is running and check your internet connection.");
+            speak("There was a problem connecting to the dictionary service. Please ensure the backend is running and check your internet connection.");
+            setDictionaryData(null);
+        } finally {
+            setLoadingDictionary(false);
         }
     };
 
@@ -386,6 +427,24 @@ const App = () => {
                 setAssistantResponse(response);
                 speak(response);
             }
+        } else if (lowerCommand.includes('define') || lowerCommand.includes('what does mean')) {
+            let word = '';
+            const defineMatch = lowerCommand.match(/define\s+(.+)/);
+            const whatDoesMatch = lowerCommand.match(/what does\s+(.+)\s+mean/);
+
+            if (defineMatch && defineMatch[1]) {
+                word = defineMatch[1].trim();
+            } else if (whatDoesMatch && whatDoesMatch[1]) {
+                word = whatDoesMatch[1].trim();
+            }
+
+            if (word) {
+                fetchDictionaryDefinition(word);
+            } else {
+                response = "Which word would you like me to define?";
+                setAssistantResponse(response);
+                speak(response);
+            }
         } else if (lowerCommand.includes('switch to female voice')) {
         const femaleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('female') && voice.lang === 'en-US');
           if (femaleVoice) {
@@ -518,7 +577,7 @@ const App = () => {
                         AI Voice Assistant
                     </h1>
                     <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
-                        {loadingWeather || loadingNews || loadingWikipedia ? (
+                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary ? (
                             <div className="flex items-center space-x-2">
                                 <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -635,6 +694,32 @@ const App = () => {
                                 </a>
                             </div>
                         )}
+                    </div>
+                )}
+
+                {/* Dictionary Display */}
+                {dictionaryData && (
+                    <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
+                        <h2 className="text-2xl font-bold mb-4 text-center text-indigo-300">
+                            {sanitizeText(dictionaryData.original_word)}
+                            {dictionaryData.corrected_word && (
+                                <span className="text-sm text-gray-400 block mt-1">
+                                    (Did you mean: {sanitizeText(dictionaryData.corrected_word)}?)
+                                </span>
+                            )}
+                        </h2>
+                        {dictionaryData.definitions.map((defGroup: any, defIndex: number) => (
+                            <div key={defIndex} className="mb-4 last:mb-0">
+                                <h3 className="text-xl font-semibold text-gray-200 mb-2">
+                                    {sanitizeText(defGroup.part_of_speech)}:
+                                </h3>
+                                <ul className="list-disc list-inside space-y-1 text-gray-300 ml-4">
+                                    {defGroup.meanings.map((meaning: string, meaningIndex: number) => (
+                                        <li key={meaningIndex}>{sanitizeText(meaning)}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        ))}
                     </div>
                 )}
 
