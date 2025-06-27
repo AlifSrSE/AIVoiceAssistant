@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import requests
 import os
@@ -8,6 +8,8 @@ from spellchecker import SpellChecker
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import subprocess
+import uuid 
 
 app = Flask(__name__)
 CORS(app)
@@ -27,6 +29,14 @@ SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'your_sender_email@example.com')
 SENDER_PASSWORD = os.environ.get('SENDER_PASSWORD', 'your_email_app_password')
 SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com') # For Gmail
 SMTP_PORT = int(os.environ.get('SMTP_PORT', 587)) # 587 for TLS, 465 for SSL
+
+GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY', 'YOUR_GOOGLE_MAPS_API_KEY_HERE')
+BASE_PLACES_TEXT_SEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+BASE_GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+DOWNLOADS_DIR = os.path.join(os.getcwd(), 'downloads')
+if not os.path.exists(DOWNLOADS_DIR):
+    os.makedirs(DOWNLOADS_DIR)
 
 # --- API Endpoints ---
 
@@ -293,6 +303,50 @@ def youtube_search():
     except Exception as e:
         print(f"An unknown error occurred during YouTube search: {e}")
         return jsonify({"error": f"An unknown server error occurred: {e}"}), 500
+
+@app.route('/youtube/download', methods=['POST'])
+def youtube_download():
+    data = request.get_json()
+    video_url = data.get('url')
+
+    if not video_url:
+        return jsonify({"error": "YouTube video URL is required"}), 400
+
+    if not ("youtube.com/watch?v=" in video_url or "youtu.be/" in video_url):
+        return jsonify({"error": "Invalid YouTube URL provided."}), 400
+
+    try:
+        output_filename = f"{uuid.uuid4().hex}.mp4"
+        output_path = os.path.join(DOWNLOADS_DIR, output_filename)
+
+        command = [
+            "yt-dlp",
+            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4",
+            "--merge-output-format", "mp4",
+            "-o", output_path,
+            video_url
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        download_link = f"/downloads/{output_filename}"
+
+        return jsonify({
+            "message": "Video downloaded successfully!",
+            "download_link": download_link,
+            "filename": output_filename,
+            "yt_dlp_stdout": result.stdout,
+            "yt_dlp_stderr": result.stderr
+        }), 200
+
+    except subprocess.CalledProcessError as e:
+        print(f"yt-dlp command failed: {e}")
+        print(f"STDOUT: {e.stdout}")
+        print(f"STDERR: {e.stderr}")
+        return jsonify({"error": f"Failed to download video: {e.stderr}"}), 500
+    except FileNotFoundError:
+        return jsonify({"error": "yt-dlp not found. Please ensure it's installed and in your system's PATH."}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred during YouTube download: {e}")
+        return jsonify({"error": f"An unknown server error occurred during download: {e}"}), 500
     
 @app.route('/send-email', methods=['POST'])
 def send_email():
@@ -338,6 +392,73 @@ def send_email():
     except Exception as e:
         print(f"An unexpected error occurred during email sending: {e}")
         return jsonify({"error": f"An unknown server error occurred: {e}"}), 500
-        
+
+@app.route('/maps/search', methods=['GET'])
+def maps_search():
+    query = request.args.get('query')
+    if not query:
+        return jsonify({"error": "Query parameter is required"}), 400
+
+    if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == 'YOUR_GOOGLE_MAPS_API_KEY_HERE':
+        print("Warning: Google Maps API key is not set. Map search will not be available.")
+        return jsonify({"error": "Google Maps API key not configured on the server."}), 500
+
+    params = {
+        'query': query,
+        'key': GOOGLE_MAPS_API_KEY
+    }
+
+    try:
+        response = requests.get(BASE_PLACES_TEXT_SEARCH_URL, params=params)
+        response.raise_for_status()
+        places_data = response.json()
+
+        if places_data.get('status') == 'OK' and places_data.get('results'):
+            results = []
+            for place in places_data['results'][:5]:
+                place_id = place.get('place_id')
+                name = place.get('name')
+                address = place.get('formatted_address')
+                rating = place.get('rating')
+                user_ratings_total = place.get('user_ratings_total')
+
+                map_url = f"https://www.google.com/maps/search/?api=1&query={requests.utils.quote(name)}&query_place_id={place_id}"
+
+                results.append({
+                    "name": name,
+                    "address": address,
+                    "rating": rating,
+                    "user_ratings_total": user_ratings_total,
+                    "map_url": map_url
+                })
+            return jsonify({"results": results}), 200
+        elif places_data.get('status') == 'ZERO_RESULTS':
+            return jsonify({"error": f"No results found for '{query}'."}), 404
+        else:
+            return jsonify({"error": places_data.get('error_message', 'Could not retrieve map data')}), response.status_code
+
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP error occurred during Maps search: {e}")
+        return jsonify({"error": f"Google Maps API Error: {e.response.status_code} - {e.response.text}"}), e.response.status_code
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection error occurred during Maps search: {e}")
+        return jsonify({"error": "Network connection error to Google Maps API. Please try again later."}), 503
+    except requests.exceptions.Timeout as e:
+        print(f"Timeout error occurred during Maps search: {e}")
+        return jsonify({"error": "Google Maps API request timed out. Please try again."}), 504
+    except requests.exceptions.RequestException as e:
+        print(f"An unexpected request error occurred during Maps search: {e}")
+        return jsonify({"error": f"An unexpected request error occurred: {e}"}), 500
+    except Exception as e:
+        print(f"An unknown error occurred during Maps search: {e}")
+        return jsonify({"error": f"An unknown server error occurred: {e}"}), 500
+
+@app.route('/downloads/<filename>')
+def serve_downloaded_file(filename):
+    """
+    Serves a file from the 'downloads' directory.
+    """
+    return send_from_directory(DOWNLOADS_DIR, filename)
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

@@ -51,6 +51,9 @@ const App = () => {
     const [currentPlayingVideoId, setCurrentPlayingVideoId] = useState<string | null>(null);
     const [sendingEmail, setSendingEmail] = useState(false);
     const [emailStatusMessage, setEmailStatusMessage] = useState<string | null>(null);
+    const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+    const [downloadLink, setDownloadLink] = useState<string | null>(null);
+    const [loadingDownload, setLoadingDownload] = useState(false);
 
     const recognitionRef = useRef<any>(null);
     const dbRef = useRef<any>(null);
@@ -260,6 +263,46 @@ const App = () => {
             setYoutubeResults([]);
         } finally {
             setLoadingYouTube(false);
+        }
+    };
+
+    // YouTube video download via the Python backend
+    const handleYouTubeDownload = async (videoUrl: string) => {
+        setLoadingDownload(true);
+        setDownloadStatus(null);
+        setDownloadLink(null);
+        setAssistantResponse(`Initiating download for video: ${videoUrl}... This might take a moment.`);
+        speak(`Initiating download for video. This might take a moment.`);
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/youtube/download`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: videoUrl }),
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                setDownloadStatus(`Download successful! Click here to download:`);
+                setDownloadLink(`${BACKEND_URL}${data.download_link}`);
+                setAssistantResponse(`Video downloaded! You can now download it from the link below.`);
+                speak(`Video downloaded!`);
+            } else {
+                setDownloadStatus(`Download failed: ${data.error || 'Unknown error.'}`);
+                setAssistantResponse(`Sorry, video download failed. ${data.error || ''}`);
+                speak(`Sorry, video download failed.`);
+                setDownloadLink(null);
+            }
+        } catch (error) {
+            console.error("Error initiating YouTube download:", error);
+            setDownloadStatus("There was a problem connecting to the download service. Please ensure the backend is running and yt-dlp is installed.");
+            setAssistantResponse("There was a problem connecting to the download service.");
+            speak("There was a problem connecting to the download service.");
+            setDownloadLink(null);
+        } finally {
+            setLoadingDownload(false);
         }
     };
     
@@ -553,6 +596,25 @@ const App = () => {
                 setAssistantResponse(response);
                 speak(response);
             }
+        } else if (lowerCommand.includes('download youtube video')) {
+            const urlMatch = lowerCommand.match(/download youtube video\s+(https?:\/\/(?:www\.)?youtube\.com\/watch\?v=|https?:\/\/youtu\.be\/)([a-zA-Z0-9_-]+)/);
+            if (urlMatch && urlMatch[0]) {
+                const videoUrl = urlMatch[0];
+                handleYouTubeDownload(videoUrl);
+            } else {
+                response = "Please provide a valid YouTube video URL after 'download YouTube video'.";
+                setAssistantResponse(response);
+                speak(response);
+            }
+        } else if (lowerCommand.includes('download this video') || lowerCommand.includes('download current video')) {
+            if (currentPlayingVideoId) {
+                const videoUrl = `https://www.youtube.com/watch?v=${currentPlayingVideoId}`;
+                handleYouTubeDownload(videoUrl);
+            } else {
+                response = "There is no video currently playing to download. Please play a video first or provide a URL.";
+                setAssistantResponse(response);
+                speak(response);
+            }
         } else if (lowerCommand.includes('switch to female voice')) {
         const femaleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('female') && voice.lang === 'en-US');
           if (femaleVoice) {
@@ -696,7 +758,7 @@ const App = () => {
                         AI Voice Assistant
                     </h1>
                     <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
-                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary || loadingYouTube || sendingEmail ? (
+                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary || loadingYouTube || sendingEmail || loadingDownload ? (
                             <div className="flex items-center space-x-2">
                                 <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -842,7 +904,7 @@ const App = () => {
                     </div>
                 )}
 
-                {/* NEW: YouTube Video Player */}
+                {/* YouTube Video Player */}
                 {currentPlayingVideoId && (
                     <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8 relative">
                         <h2 className="text-2xl font-bold mb-4 text-center text-red-400">Now Playing</h2>
@@ -902,6 +964,28 @@ const App = () => {
                         emailStatusMessage.includes('successfully') ? 'bg-green-700 bg-opacity-50 text-green-100' : 'bg-red-700 bg-opacity-50 text-red-100'
                     } shadow-xl border border-gray-600`}>
                         {sanitizeText(emailStatusMessage)}
+                    </div>
+                )}
+
+                {/* YouTube Download Status */}
+                {(downloadStatus || downloadLink) && (
+                    <div className={`rounded-xl p-4 mb-8 text-center font-semibold ${
+                        downloadStatus && downloadStatus.includes('successful') ? 'bg-indigo-700 bg-opacity-50 text-indigo-100' : 'bg-red-700 bg-opacity-50 text-red-100'
+                    } shadow-xl border border-gray-600`}>
+                        {sanitizeText(downloadStatus || 'Processing download...')}
+                        {downloadLink && (
+                            <div className="mt-2">
+                                <a
+                                    href={downloadLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-300 hover:underline inline-flex items-center space-x-2"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-download"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                                    <span>Download Video</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
                 )}
 
