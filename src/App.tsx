@@ -25,6 +25,9 @@ const sanitizeText = (text: string) => {
     return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 };
 
+// Define backend URL (Flask backend)
+const BACKEND_URL = 'http://127.0.0.1:5000';
+
 // Main App component
 const App = () => {
     const [listening, setListening] = useState(false);
@@ -34,6 +37,9 @@ const App = () => {
     const [newTodo, setNewTodo] = useState('');
     const [userId, setUserId] = useState<string | null>(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
+
+    const [weatherData, setWeatherData] = useState<any>(null);
+    const [loadingWeather, setLoadingWeather] = useState(false);
     const recognitionRef = useRef<any>(null);
     const dbRef = useRef<any>(null);
     const authRef = useRef<any>(null);
@@ -79,6 +85,34 @@ const App = () => {
         };
 
         window.speechSynthesis.speak(utterance);
+    };
+
+    // Function to fetch weather data from the Python backend
+    const fetchWeather = async (city: string) => {
+        setLoadingWeather(true);
+        setAssistantResponse(`Fetching weather for ${city}...`);
+        try {
+            const response = await fetch(`${BACKEND_URL}/weather?city=${encodeURIComponent(city)}`);
+            const data = await response.json();
+
+            if (response.ok) {
+                setWeatherData(data);
+                const weatherText = `The weather in ${data.city} is ${data.description} with a temperature of ${Math.round(data.temperature)} degrees Celsius. Wind speed is ${Math.round(data.wind_speed)} meters per second, and humidity is ${data.humidity} percent.`;
+                setAssistantResponse(weatherText);
+                speak(weatherText); // Speak the weather report
+            } else {
+                setAssistantResponse(`Sorry, I couldn't get the weather for ${city}. ${data.error || 'Please try again later.'}`);
+                speak(`Sorry, I couldn't get the weather for ${city}.`);
+                setWeatherData(null); // Clear previous weather data
+            }
+        } catch (error) {
+            console.error("Error fetching weather:", error);
+            setAssistantResponse("There was a problem connecting to the weather service. Please ensure the backend is running and check your internet connection.");
+            speak("There was a problem connecting to the weather service. Please ensure the backend is running and check your internet connection.");
+            setWeatherData(null);
+        } finally {
+            setLoadingWeather(false);
+        }
     };
 
     // Initialize Firebase and set up authentication
@@ -176,7 +210,6 @@ const App = () => {
         };
     }, []);
 
-    // Effect for real-time Firestore todo list updates
     useEffect(() => {
         if (isAuthReady && userId && dbRef.current) {
             const todosCollectionRef = collection(dbRef.current, `artifacts/${appId}/users/${userId}/todos`);
@@ -229,7 +262,7 @@ const App = () => {
                 const todoIndex = parseInt(markMatch[1]) - 1;
                 if (todoIndex >= 0 && todoIndex < todos.length) {
                     const todoId = todos[todoIndex].id;
-                    handleToggleTodo(todoId, true); // Mark as complete
+                    handleToggleTodo(todoId, true);
                     response = `Okay, I've marked "${todos[todoIndex].task}" as complete.`;
                 } else {
                     response = "I couldn't find a to-do item with that number. Please specify a valid number.";
@@ -251,6 +284,16 @@ const App = () => {
             } else {
                 response = "Which to-do item would you like to delete? Please say 'delete todo number X'.";
             }
+        } else if (lowerCommand.includes('what is the weather in')) {
+            const cityMatch = lowerCommand.match(/what is the weather in (.+)/);
+            if (cityMatch && cityMatch[1]) {
+                const city = cityMatch[1].trim();
+                fetchWeather(city);
+            } else {
+                response = "For which city would you like to know the weather?";
+                setAssistantResponse(response);
+                speak(response);
+            }
         } else if (lowerCommand.includes('switch to female voice')) {
         const femaleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('female') && voice.lang === 'en-US');
           if (femaleVoice) {
@@ -269,8 +312,26 @@ const App = () => {
             } else {
                 response = 'Sorry, a suitable male voice is not available.';
             }
-        }
-        else {
+        } else if (lowerCommand.includes('open website')) {
+            const urlMatch = lowerCommand.match(/open website (.*?)(?:\.|$)/);
+            if (urlMatch && urlMatch[1]) {
+                let url = urlMatch[1].trim();
+                if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    url = 'http://' + url;
+                }
+                try {
+                    window.open(url, '_blank');
+                    response = `Opening ${url}.`;
+                } catch (e) {
+                    console.error("Failed to open URL:", e);
+                    response = `Sorry, I couldn't open ${url}.`;
+                }
+            } else {
+                response = "Which website would you like to open? Please say 'open website example dot com'.";
+            }
+            setAssistantResponse(response);
+            speak(response);
+        }  else {
             response = `I understand you said "${command}". I am still learning, but for now, I can tell time and manage your to-do list.`;
         }
 
@@ -365,8 +426,21 @@ const App = () => {
                         AI Voice Assistant
                     </h1>
                     <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
-                        {sanitizeText(assistantResponse)}
+                        {loadingWeather ? (
+                            <div className="flex items-center space-x-2">
+                                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span>{assistantResponse}</span>
+                            </div>
+                        ) : (
+                            sanitizeText(assistantResponse)
+                        )}
                     </div>
+                    {/* <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
+                        {sanitizeText(assistantResponse)}
+                    </div> */}
                     {spokenText && (
                         <div className="text-sm text-center text-gray-400 mt-2 italic">
                             You said: "{sanitizeText(spokenText)}"
@@ -399,6 +473,28 @@ const App = () => {
                         Stop Listening
                     </button>
                 </div>
+
+                {/* NEW: Weather Display */}
+                {weatherData && (
+                    <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
+                        <h2 className="text-2xl font-bold mb-4 text-center text-orange-300">Weather in {weatherData.city}, {weatherData.country}</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-lg">
+                            <div><span className="font-semibold">Temperature:</span> {Math.round(weatherData.temperature)}°C ({Math.round(weatherData.feels_like)}°C feels like)</div>
+                            <div><span className="font-semibold">Description:</span> {weatherData.description}</div>
+                            <div><span className="font-semibold">Humidity:</span> {weatherData.humidity}%</div>
+                            <div><span className="font-semibold">Wind Speed:</span> {Math.round(weatherData.wind_speed)} m/s</div>
+                            {weatherData.icon && (
+                                <div className="col-span-full flex justify-center mt-4">
+                                    <img
+                                        src={`http://openweathermap.org/img/wn/${weatherData.icon}@2x.png`}
+                                        alt={weatherData.description}
+                                        className="w-24 h-24"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
 
                 {/* To-Do List Section */}
                 <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600">
