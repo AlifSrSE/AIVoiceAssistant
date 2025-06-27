@@ -46,6 +46,9 @@ const App = () => {
     const [loadingWikipedia, setLoadingWikipedia] = useState(false);
     const [dictionaryData, setDictionaryData] = useState<any>(null);
     const [loadingDictionary, setLoadingDictionary] = useState(false);
+    const [youtubeResults, setYoutubeResults] = useState<any[]>([]);
+    const [loadingYouTube, setLoadingYouTube] = useState(false);
+    const [currentPlayingVideoId, setCurrentPlayingVideoId] = useState<string | null>(null);
 
     const recognitionRef = useRef<any>(null);
     const dbRef = useRef<any>(null);
@@ -220,6 +223,41 @@ const App = () => {
             setDictionaryData(null);
         } finally {
             setLoadingDictionary(false);
+        }
+    };
+
+    // Function to fetch YouTube videos from the Python backend
+    const fetchYouTubeVideos = async (query: string, autoPlayFirst: boolean = false) => {
+        setLoadingYouTube(true);
+        setYoutubeResults([]);
+        setCurrentPlayingVideoId(null);
+        setAssistantResponse(`Searching YouTube for "${query}"...`);
+        try {
+            const response = await fetch(`${BACKEND_URL}/youtube/search?query=${encodeURIComponent(query)}`);
+            const data = await response.json();
+
+            if (response.ok && data.videos && data.videos.length > 0) {
+                setYoutubeResults(data.videos);
+                const firstVideoTitle = data.videos[0].title;
+                setAssistantResponse(`I found "${firstVideoTitle}" and more videos on YouTube.`);
+                speak(`I found "${firstVideoTitle}" and more videos on YouTube.`);
+                if (autoPlayFirst) {
+                    setCurrentPlayingVideoId(data.videos[0].id);
+                    setAssistantResponse(`Now playing "${firstVideoTitle}".`);
+                    speak(`Now playing "${firstVideoTitle}".`);
+                }
+            } else {
+                setAssistantResponse(`Sorry, I couldn't find any YouTube videos for "${query}". ${data.error || ''}`);
+                speak(`Sorry, I couldn't find any YouTube videos for "${query}".`);
+                setYoutubeResults([]);
+            }
+        } catch (error) {
+            console.error("Error fetching YouTube videos:", error);
+            setAssistantResponse("There was a problem connecting to the YouTube service. Please ensure the backend is running and check your internet connection.");
+            speak("There was a problem connecting to the YouTube service. Please ensure the backend is running and check your internet connection.");
+            setYoutubeResults([]);
+        } finally {
+            setLoadingYouTube(false);
         }
     };
 
@@ -445,6 +483,26 @@ const App = () => {
                 setAssistantResponse(response);
                 speak(response);
             }
+        } else if (lowerCommand.includes('search youtube for') || lowerCommand.includes('find on youtube')) {
+            const queryMatch = lowerCommand.match(/(?:search youtube for|find on youtube)\s+(.+)/);
+            if (queryMatch && queryMatch[1]) {
+                const query = queryMatch[1].trim();
+                fetchYouTubeVideos(query, false);
+            } else {
+                response = "What would you like to search for on YouTube?";
+                setAssistantResponse(response);
+                speak(response);
+            }
+        } else if (lowerCommand.includes('play')) {
+            const playMatch = lowerCommand.match(/play\s+(.+)/);
+            if (playMatch && playMatch[1]) {
+                const query = playMatch[1].trim();
+                fetchYouTubeVideos(query, true);
+            } else {
+                response = "What would you like me to play?";
+                setAssistantResponse(response);
+                speak(response);
+            }
         } else if (lowerCommand.includes('switch to female voice')) {
         const femaleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('female') && voice.lang === 'en-US');
           if (femaleVoice) {
@@ -504,6 +562,17 @@ const App = () => {
         if (recognitionRef.current) {
             recognitionRef.current.stop();
         }
+    };
+
+     const playVideo = (videoId: string) => {
+        setCurrentPlayingVideoId(videoId);
+        setAssistantResponse(`Now playing the selected video.`);
+        speak(`Now playing the selected video.`);
+    };
+
+    const closeVideoPlayer = () => {
+        setCurrentPlayingVideoId(null);
+        setAssistantResponse("Video player closed.");
     };
 
     // Firestore CRUD operations for Todo List
@@ -577,7 +646,7 @@ const App = () => {
                         AI Voice Assistant
                     </h1>
                     <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
-                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary ? (
+                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary || loadingYouTube ? (
                             <div className="flex items-center space-x-2">
                                 <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -720,6 +789,60 @@ const App = () => {
                                 </ul>
                             </div>
                         ))}
+                    </div>
+                )}
+
+                {/* NEW: YouTube Video Player */}
+                {currentPlayingVideoId && (
+                    <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8 relative">
+                        <h2 className="text-2xl font-bold mb-4 text-center text-red-400">Now Playing</h2>
+                        <button
+                            onClick={closeVideoPlayer}
+                            className="absolute top-2 right-2 p-2 rounded-full bg-red-600 hover:bg-red-700 text-white transition-transform transform hover:scale-110 active:scale-90"
+                            title="Close Video"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                        </button>
+                        <div className="relative" style={{ paddingBottom: '56.25%', height: 0 }}>
+                            <iframe
+                                src={`https://www.youtube.com/embed/${currentPlayingVideoId}?autoplay=1`}
+                                frameBorder="0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                                className="absolute top-0 left-0 w-full h-full rounded-lg"
+                            ></iframe>
+                        </div>
+                    </div>
+                )}
+
+                {/* YouTube Search Results */}
+                {youtubeResults.length > 0 && !currentPlayingVideoId && (
+                    <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
+                        <h2 className="text-2xl font-bold mb-4 text-center text-pink-300">YouTube Search Results</h2>
+                        <ul className="space-y-4">
+                            {youtubeResults.map((video: any, index: number) => (
+                                <li key={video.id} className="bg-gray-800 p-4 rounded-lg shadow-inner flex flex-col md:flex-row items-center space-y-3 md:space-y-0 md:space-x-4">
+                                    {video.thumbnail && (
+                                        <img
+                                            src={video.thumbnail}
+                                            alt={video.title}
+                                            className="w-24 h-24 rounded-lg object-cover flex-shrink-0"
+                                        />
+                                    )}
+                                    <div className="flex-grow text-center md:text-left">
+                                        <h3 className="text-xl font-semibold text-red-200 mb-1">{sanitizeText(video.title)}</h3>
+                                        {video.description && <p className="text-gray-300 text-sm line-clamp-2">{sanitizeText(video.description)}</p>}
+                                    </div>
+                                    <button
+                                        onClick={() => playVideo(video.id)}
+                                        className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold text-white transition-transform transform hover:scale-105 active:scale-95 shadow-md flex items-center justify-center space-x-2 flex-shrink-0"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-play"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                        <span>Play</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
                     </div>
                 )}
 

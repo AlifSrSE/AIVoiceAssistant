@@ -17,11 +17,14 @@ BASE_WEATHER_URL = "http://api.openweathermap.org/data/2.5/weather"
 NEWS_API_KEY = os.environ.get('NEWS_API_KEY', 'YOUR_NEWS_API_KEY_HERE')
 BASE_NEWS_URL = "https://newsapi.org/v2/top-headlines"
 
+YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY', 'YOUR_YOUTUBE_API_KEY_HERE')
+BASE_YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+
 # --- API Endpoints ---
 
 @app.route('/')
 def home():
-    return "AI Voice Assistant Backend is running!"
+    return "You are on the right track, Backend is running!"
 
 @app.route('/weather', methods=['GET'])
 def get_weather():
@@ -227,5 +230,61 @@ def get_word_definition():
         else:
             return jsonify({"error": f"Could not find definitions for '{word_query}'."}), 404
 
+@app.route('/youtube/search', methods=['GET'])
+def youtube_search():
+    query = request.args.get('query')
+    if not query:
+        return jsonify({"error": "Query parameter is required"}), 400
+
+    if not YOUTUBE_API_KEY or YOUTUBE_API_KEY == 'YOUR_YOUTUBE_API_KEY_HERE':
+        print("Warning: YouTube API key is not set. YouTube search will not be available.")
+        return jsonify({"error": "YouTube API key not configured on the server."}), 500
+
+    params = {
+        'part': 'snippet',
+        'type': 'video',
+        'q': query,
+        'maxResults': 5,
+        'key': YOUTUBE_API_KEY
+    }
+
+    try:
+        response = requests.get(BASE_YOUTUBE_SEARCH_URL, params=params)
+        response.raise_for_status()
+        youtube_data = response.json()
+
+        videos = []
+        if youtube_data and youtube_data.get('items'):
+            for item in youtube_data['items']:
+                video_id = item['id']['videoId']
+                title = item['snippet']['title']
+                description = item['snippet']['description']
+                thumbnail_url = item['snippet']['thumbnails']['default']['url']
+
+                videos.append({
+                    "id": video_id,
+                    "title": title,
+                    "description": description,
+                    "thumbnail": thumbnail_url,
+                    "url": f"https://www.youtube.com/watch?v={video_id}"
+                })
+        return jsonify({"videos": videos}), 200
+
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP error occurred during YouTube search: {e}")
+        return jsonify({"error": f"YouTube API Error: {e.response.status_code} - {e.response.text}"}), e.response.status_code
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection error occurred during YouTube search: {e}")
+        return jsonify({"error": "Network connection error to YouTube API. Please try again later."}), 503
+    except requests.exceptions.Timeout as e:
+        print(f"Timeout error occurred during YouTube search: {e}")
+        return jsonify({"error": "YouTube API request timed out. Please try again."}), 504
+    except requests.exceptions.RequestException as e:
+        print(f"An unexpected request error occurred during YouTube search: {e}")
+        return jsonify({"error": f"An unexpected request error occurred: {e}"}), 500
+    except Exception as e:
+        print(f"An unknown error occurred during YouTube search: {e}")
+        return jsonify({"error": f"An unknown server error occurred: {e}"}), 500
+    
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
