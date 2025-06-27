@@ -1,5 +1,7 @@
 # AI Voice Assistant
 
+![AI Voice Assistant Screenshot](./assets/AiVoiceAssistant.JPG)
+
 ## ✨ Project Overview
 
 This is a powerful and interactive AI Voice Assistant built with a React frontend and a Python Flask backend. It leverages web speech technologies and various external APIs to provide a comprehensive set of functionalities, allowing users to interact with their computer using voice commands for common tasks and information retrieval.
