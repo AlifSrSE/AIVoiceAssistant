@@ -3,18 +3,15 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
 
-// Declare global variables for environment-provided configuration
 declare const __app_id: string | undefined;
 declare const __firebase_config: string | undefined;
 declare const __initial_auth_token: string | undefined;
 
-// Define global variables for Firebase configuration provided by the environment
-// Ensure these are correctly handled even if not provided in a specific environment (e.g., local development)
+// Global variables for Firebase configuration provided by the environment
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-// Ensure SpeechRecognition and SpeechSynthesis are available in the browser
 const SpeechRecognition =
     typeof window !== 'undefined'
         ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
@@ -24,9 +21,7 @@ const SpeechSynthesis =
         ? window.speechSynthesis
         : undefined;
 
-// Helper to sanitize text for display
 const sanitizeText = (text: string) => {
-    // Basic sanitization: replace < and > to prevent XSS.
     return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 };
 
@@ -65,10 +60,9 @@ const App = () => {
           return;
         }
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1; // You can adjust the speed
-        utterance.pitch = 1; // You can adjust the pitch
+        utterance.rate = 1;
+        utterance.pitch = 1;
 
-        // Find a specific voice if requested, otherwise use default
         let selectedVoice: SpeechSynthesisVoice | undefined;
         if (voiceName && availableVoices.length > 0) {
             selectedVoice = availableVoices.find(voice => voice.name === voiceName);
@@ -97,21 +91,18 @@ const App = () => {
             authRef.current = auth;
             dbRef.current = db;
 
-            // Listen for authentication state changes
             const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     setUserId(user.uid);
                     setIsAuthReady(true);
                     console.log("Firebase Auth Ready. User ID:", user.uid);
                 } else {
-                    // Sign in anonymously if no initial auth token is provided
                     if (initialAuthToken) {
                         try {
                             await signInWithCustomToken(auth, initialAuthToken);
                             console.log("Signed in with custom token.");
                         } catch (error) {
                             console.error("Error signing in with custom token:", error);
-                            // Fallback to anonymous sign-in if custom token fails
                             try {
                                 await signInAnonymously(auth);
                                 console.log("Signed in anonymously due to custom token failure.");
@@ -139,9 +130,8 @@ const App = () => {
             console.error("Failed to initialize Firebase:", error);
             setAssistantResponse("Failed to initialize the application. Please check console for details.");
         }
-    }, []); // Run once on component mount
+    }, []);
 
-    // Set up SpeechRecognition and command processing
     useEffect(() => {
         if (!SpeechRecognition) {
             setAssistantResponse('Speech Recognition is not supported in this browser.');
@@ -149,9 +139,9 @@ const App = () => {
         }
 
         const recognition = new SpeechRecognition();
-        recognition.continuous = false; // Only get one result per recognition start
-        recognition.interimResults = false; // Don't return interim results
-        recognition.lang = 'en-US'; // Set language
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
 
         recognition.onstart = () => {
             setListening(true);
@@ -179,7 +169,6 @@ const App = () => {
 
         recognitionRef.current = recognition;
 
-        // Clean up on component unmount
         return () => {
             if (recognitionRef.current) {
                 recognitionRef.current.stop();
@@ -189,7 +178,6 @@ const App = () => {
 
     // Effect for real-time Firestore todo list updates
     useEffect(() => {
-        // Only fetch data if auth is ready and userId is available
         if (isAuthReady && userId && dbRef.current) {
             const todosCollectionRef = collection(dbRef.current, `artifacts/${appId}/users/${userId}/todos`);
             const q = query(todosCollectionRef);
@@ -199,7 +187,6 @@ const App = () => {
                     id: doc.id,
                     ...doc.data()
                 }));
-                // Sort by creation date if available, otherwise keep existing order
                 fetchedTodos.sort((a: any, b: any) => (a.createdAt?.toDate() || 0) - (b.createdAt?.toDate() || 0));
                 setTodos(fetchedTodos);
                 console.log("Todos fetched:", fetchedTodos);
@@ -207,13 +194,10 @@ const App = () => {
                 console.error("Error fetching todos:", error);
                 setAssistantResponse("Failed to load your to-do list.");
             });
-
-            // Clean up the listener when the component unmounts or userId changes
             return () => unsubscribe();
         }
-    }, [isAuthReady, userId]); // Re-run when auth state or userId changes
+    }, [isAuthReady, userId]);
 
-    // Function to handle voice commands
     const processCommand = (command: string) => {
         const lowerCommand = command.toLowerCase();
         let response = '';
@@ -227,7 +211,7 @@ const App = () => {
             const todoMatch = lowerCommand.match(/(?:add|create)\s+a\s+to\s*do\s+(?:item\s+)?(.*?)(?:\.|$)/);
             if (todoMatch && todoMatch[1]) {
                 const task = todoMatch[1].trim();
-                handleAddTodo(task); // Call the function to add todo to Firestore
+                handleAddTodo(task);
                 response = `Okay, I've added "${task}" to your to-do list.`;
             } else {
                 response = "What would you like to add to your to-do list?";
@@ -286,7 +270,6 @@ const App = () => {
                 response = 'Sorry, a suitable male voice is not available.';
             }
         }
-        // Placeholder for other commands (e.g., news, weather, Wikipedia, etc.)
         else {
             response = `I understand you said "${command}". I am still learning, but for now, I can tell time and manage your to-do list.`;
         }
@@ -326,9 +309,9 @@ const App = () => {
             await addDoc(todosCollectionRef, {
                 task: taskText.trim(),
                 completed: false,
-                createdAt: new Date(), // Add timestamp for sorting
+                createdAt: new Date(),
             });
-            setNewTodo(''); // Clear input after adding
+            setNewTodo('');
             setAssistantResponse("To-do added successfully!");
         } catch (error) {
             console.error("Error adding to-do:", error);
@@ -465,7 +448,6 @@ const App = () => {
                                             } text-white transition-transform transform hover:scale-110 active:scale-90 shadow-sm`}
                                             title={todo.completed ? 'Mark as Incomplete' : 'Mark as Complete'}
                                         >
-                                            {/* Lucide-react CheckCircle or Circle icon (replace with actual icon if used) */}
                                             {todo.completed ? (
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-rotate-ccw"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
                                             ) : (
@@ -477,7 +459,6 @@ const App = () => {
                                             className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white transition-transform transform hover:scale-110 active:scale-90 shadow-sm"
                                             title="Delete To-Do"
                                         >
-                                            {/* Lucide-react Trash icon (replace with actual icon if used) */}
                                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
                                         </button>
                                     </div>
