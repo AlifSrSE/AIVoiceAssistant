@@ -40,10 +40,11 @@ const App = () => {
 
     const [weatherData, setWeatherData] = useState<any>(null);
     const [loadingWeather, setLoadingWeather] = useState(false);
+    const [newsArticles, setNewsArticles] = useState<any[]>([]);
+    const [loadingNews, setLoadingNews] = useState(false);
     const recognitionRef = useRef<any>(null);
     const dbRef = useRef<any>(null);
     const authRef = useRef<any>(null);
-
     const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
     useEffect(() => {
@@ -112,6 +113,40 @@ const App = () => {
             setWeatherData(null);
         } finally {
             setLoadingWeather(false);
+        }
+    };
+
+    // Function to fetch news data from the Python backend
+    const fetchNews = async (query: string = '') => {
+        setLoadingNews(true);
+        setNewsArticles([]);
+        setAssistantResponse(query ? `Fetching news about ${query}...` : 'Fetching top headlines...');
+        try {
+            const params = new URLSearchParams();
+            if (query) {
+                params.append('query', query);
+            }
+
+            const response = await fetch(`${BACKEND_URL}/news?${params.toString()}`);
+            const data = await response.json();
+
+            if (response.ok && data.articles && data.articles.length > 0) {
+                setNewsArticles(data.articles);
+                const firstArticleTitle = data.articles[0].title;
+                setAssistantResponse(`Here's the top news: "${firstArticleTitle}" and more.`);
+                speak(`Here's the top news: "${firstArticleTitle}" and more.`);
+            } else {
+                setAssistantResponse(`Sorry, I couldn't find any news ${query ? 'about ' + query : ''}. ${data.error || 'Please try again later.'}`);
+                speak(`Sorry, I couldn't find any news ${query ? 'about ' + query : ''}.`);
+                setNewsArticles([]);
+            }
+        } catch (error) {
+            console.error("Error fetching news:", error);
+            setAssistantResponse("There was a problem connecting to the news service. Please ensure the backend is running and check your internet connection.");
+            speak("There was a problem connecting to the news service. Please ensure the backend is running and check your internet connection.");
+            setNewsArticles([]);
+        } finally {
+            setLoadingNews(false);
         }
     };
 
@@ -294,6 +329,14 @@ const App = () => {
                 setAssistantResponse(response);
                 speak(response);
             }
+        } else if (lowerCommand.includes('what is the news') || lowerCommand.includes('tell me the news')) {
+            const queryMatch = lowerCommand.match(/(?:what is the news about|tell me the news about)\s+(.+)/);
+            if (queryMatch && queryMatch[1]) {
+                const query = queryMatch[1].trim();
+                fetchNews(query);
+            } else {
+                fetchNews();
+            }
         } else if (lowerCommand.includes('switch to female voice')) {
         const femaleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('female') && voice.lang === 'en-US');
           if (femaleVoice) {
@@ -426,7 +469,7 @@ const App = () => {
                         AI Voice Assistant
                     </h1>
                     <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
-                        {loadingWeather ? (
+                        {loadingWeather || loadingNews ? (
                             <div className="flex items-center space-x-2">
                                 <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -474,7 +517,7 @@ const App = () => {
                     </button>
                 </div>
 
-                {/* NEW: Weather Display */}
+                {/* Weather Display */}
                 {weatherData && (
                     <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
                         <h2 className="text-2xl font-bold mb-4 text-center text-orange-300">Weather in {weatherData.city}, {weatherData.country}</h2>
@@ -493,6 +536,32 @@ const App = () => {
                                 </div>
                             )}
                         </div>
+                    </div>
+                )}
+
+                {/* News Display */}
+                {newsArticles.length > 0 && (
+                    <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
+                        <h2 className="text-2xl font-bold mb-4 text-center text-cyan-300">Latest News</h2>
+                        <ul className="space-y-4">
+                            {newsArticles.map((article: any, index: number) => (
+                                <li key={index} className="bg-gray-800 p-4 rounded-lg shadow-inner">
+                                    <h3 className="text-xl font-semibold text-blue-200 mb-1">{sanitizeText(article.title)}</h3>
+                                    {article.source && <p className="text-sm text-gray-400 mb-2">Source: {sanitizeText(article.source)}</p>}
+                                    {article.description && <p className="text-gray-300 text-base">{sanitizeText(article.description)}</p>}
+                                    {article.url && (
+                                        <a
+                                            href={article.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-blue-400 hover:underline mt-2 inline-block text-sm"
+                                        >
+                                            Read more
+                                        </a>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
                     </div>
                 )}
 
