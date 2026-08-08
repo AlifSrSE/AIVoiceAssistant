@@ -108,7 +108,7 @@ A React + Flask voice-controlled assistant with Web Speech API, SQLite-backed to
 │   ├── tests/
 │   │   └── test_app.py
 │   └── downloads/
-└── .kilo/
+└──
 ```
 
 ## Setup
