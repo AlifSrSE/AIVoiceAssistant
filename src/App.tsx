@@ -1,52 +1,32 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
-
-declare const __app_id: string | undefined;
-declare const __firebase_config: string | undefined;
-declare const __initial_auth_token: string | undefined;
-
-// Global variables for Firebase configuration provided by the environment
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-const SpeechRecognition =
-    typeof window !== 'undefined'
-        ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
-        : undefined;
-const SpeechSynthesis =
-    typeof window !== 'undefined'
-        ? window.speechSynthesis
-        : undefined;
+import React, { useState, useEffect } from 'react';
+import { useSpeechRecognition } from './hooks/useSpeechRecognition';
+import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
+import { useTodos } from './hooks/useTodos';
+import { api } from './services/api';
+import { WeatherData, NewsArticle, WikipediaData, DictionaryData, YouTubeVideo, MapsResult, Todo, DictionaryDefinition } from './types';
 
 const sanitizeText = (text: string) => {
     return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 };
 
-// Define backend URL (Flask backend)
-const BACKEND_URL = 'http://127.0.0.1:5000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:5000';
 
 // Main App component
 const App = () => {
     const [listening, setListening] = useState(false);
     const [spokenText, setSpokenText] = useState('');
     const [assistantResponse, setAssistantResponse] = useState('Hello! How can I help you today?');
-    const [todos, setTodos] = useState<any[]>([]);
     const [newTodo, setNewTodo] = useState('');
-    const [userId, setUserId] = useState<string | null>(null);
-    const [isAuthReady, setIsAuthReady] = useState(false);
 
-    const [weatherData, setWeatherData] = useState<any>(null);
+    const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
     const [loadingWeather, setLoadingWeather] = useState(false);
-    const [newsArticles, setNewsArticles] = useState<any[]>([]);
+    const [newsArticles, setNewsArticles] = useState<NewsArticle[]>([]);
     const [loadingNews, setLoadingNews] = useState(false);
-    const [wikipediaData, setWikipediaData] = useState<any>(null);
+    const [wikipediaData, setWikipediaData] = useState<WikipediaData | null>(null);
     const [loadingWikipedia, setLoadingWikipedia] = useState(false);
-    const [dictionaryData, setDictionaryData] = useState<any>(null);
+    const [dictionaryData, setDictionaryData] = useState<DictionaryData | null>(null);
     const [loadingDictionary, setLoadingDictionary] = useState(false);
-    const [youtubeResults, setYoutubeResults] = useState<any[]>([]);
+    const [youtubeResults, setYoutubeResults] = useState<YouTubeVideo[]>([]);
     const [loadingYouTube, setLoadingYouTube] = useState(false);
     const [currentPlayingVideoId, setCurrentPlayingVideoId] = useState<string | null>(null);
     const [sendingEmail, setSendingEmail] = useState(false);
@@ -54,75 +34,63 @@ const App = () => {
     const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
     const [downloadLink, setDownloadLink] = useState<string | null>(null);
     const [loadingDownload, setLoadingDownload] = useState(false);
+    const [mapsResults, setMapsResults] = useState<MapsResult[]>([]);
+    const [loadingMaps, setLoadingMaps] = useState(false);
+    const [commandHistory, setCommandHistory] = useState<string[]>([]);
 
-    const recognitionRef = useRef<any>(null);
-    const dbRef = useRef<any>(null);
-    const authRef = useRef<any>(null);
-    const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+    const { todos, addTodo, toggleTodo, deleteTodo } = useTodos();
+    const { start: startRecognition, stop: stopRecognition, isListening: recognitionIsListening, isSupported: speechRecognitionSupported } = useSpeechRecognition(
+      (transcript) => {
+        setSpokenText(transcript);
+        processCommand(transcript);
+      },
+      true
+    );
+    const { speak, voices } = useSpeechSynthesis();
 
     useEffect(() => {
-        if (!window.speechSynthesis) return;
-        const loadVoices = () => {
-            const voices = window.speechSynthesis.getVoices();
-            setAvailableVoices(voices);
-        };
-        loadVoices();
-        window.speechSynthesis.onvoiceschanged = loadVoices;
-        return () => {
-            window.speechSynthesis.onvoiceschanged = null;
-        };
-    }, []);
+      setListening(recognitionIsListening);
+    }, [recognitionIsListening]);
 
-    // Speak text using SpeechSynthesis API
-    const speak = (text: string, voiceName?: string) => {
-        if (!window.speechSynthesis) {
-          setAssistantResponse('Speech synthesis is not supported in this browser.');
-          return;
+    useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+          event.preventDefault();
+          if (listening) {
+            stopRecognition();
+          } else {
+            startRecognition();
+          }
         }
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1;
-        utterance.pitch = 1;
+      };
 
-        let selectedVoice: SpeechSynthesisVoice | undefined;
-        if (voiceName && availableVoices.length > 0) {
-            selectedVoice = availableVoices.find(voice => voice.name === voiceName);
-            if (selectedVoice) {
-                utterance.voice = selectedVoice;
-            } else {
-                console.warn(`Voice "${voiceName}" not found. Using default voice.`);
-            }
-        }
+      document.addEventListener('keydown', handleKeyDown);
+      return () => {
+        document.removeEventListener('keydown', handleKeyDown);
+      };
+    }, [listening, startRecognition, stopRecognition]);
 
-        utterance.onerror = (event) => {
-            console.error('SpeechSynthesisUtterance.onerror', event);
-            setAssistantResponse('Sorry, I encountered an error speaking.');
-        };
-
-        window.speechSynthesis.speak(utterance);
-    };
+    useEffect(() => {
+      if (!speechRecognitionSupported) {
+        setAssistantResponse('Speech Recognition is not supported in this browser.');
+      }
+    }, [speechRecognitionSupported]);
 
     // Weather data from the Python backend
     const fetchWeather = async (city: string) => {
         setLoadingWeather(true);
         setAssistantResponse(`Fetching weather for ${city}...`);
         try {
-            const response = await fetch(`${BACKEND_URL}/weather?city=${encodeURIComponent(city)}`);
-            const data = await response.json();
-
-            if (response.ok) {
-                setWeatherData(data);
-                const weatherText = `The weather in ${data.city} is ${data.description} with a temperature of ${Math.round(data.temperature)} degrees Celsius. Wind speed is ${Math.round(data.wind_speed)} meters per second, and humidity is ${data.humidity} percent.`;
-                setAssistantResponse(weatherText);
-                speak(weatherText); // Speak the weather report
-            } else {
-                setAssistantResponse(`Sorry, I couldn't get the weather for ${city}. ${data.error || 'Please try again later.'}`);
-                speak(`Sorry, I couldn't get the weather for ${city}.`);
-                setWeatherData(null); // Clear previous weather data
-            }
-        } catch (error) {
+            const data = await api.getWeather(city);
+            setWeatherData(data);
+            const weatherText = `The weather in ${data.city} is ${data.description} with a temperature of ${Math.round(data.temperature)} degrees Celsius. Wind speed is ${Math.round(data.wind_speed)} meters per second, and humidity is ${data.humidity} percent.`;
+            setAssistantResponse(weatherText);
+            speak(weatherText);
+        } catch (error: unknown) {
             console.error("Error fetching weather:", error);
-            setAssistantResponse("There was a problem connecting to the weather service. Please ensure the backend is running and check your internet connection.");
-            speak("There was a problem connecting to the weather service. Please ensure the backend is running and check your internet connection.");
+            const errorMessage = error instanceof Error ? error.message : 'Please try again later.';
+            setAssistantResponse(`Sorry, I couldn't get the weather for ${city}. ${errorMessage}`);
+            speak(`Sorry, I couldn't get the weather for ${city}.`);
             setWeatherData(null);
         } finally {
             setLoadingWeather(false);
@@ -135,25 +103,18 @@ const App = () => {
         setNewsArticles([]);
         setAssistantResponse(query ? `Fetching news about ${query}...` : 'Fetching top headlines...');
         try {
-            const params = new URLSearchParams();
-            if (query) {
-                params.append('query', query);
-            }
-
-            const response = await fetch(`${BACKEND_URL}/news?${params.toString()}`);
-            const data = await response.json();
-
-            if (response.ok && data.articles && data.articles.length > 0) {
+            const data = await api.getNews(query);
+            if (data.articles && data.articles.length > 0) {
                 setNewsArticles(data.articles);
                 const firstArticleTitle = data.articles[0].title;
                 setAssistantResponse(`Here's the top news: "${firstArticleTitle}" and more.`);
                 speak(`Here's the top news: "${firstArticleTitle}" and more.`);
             } else {
-                setAssistantResponse(`Sorry, I couldn't find any news ${query ? 'about ' + query : ''}. ${data.error || 'Please try again later.'}`);
+                setAssistantResponse(`Sorry, I couldn't find any news ${query ? 'about ' + query : ''}.`);
                 speak(`Sorry, I couldn't find any news ${query ? 'about ' + query : ''}.`);
                 setNewsArticles([]);
             }
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching news:", error);
             setAssistantResponse("There was a problem connecting to the news service. Please ensure the backend is running and check your internet connection.");
             speak("There was a problem connecting to the news service. Please ensure the backend is running and check your internet connection.");
@@ -169,23 +130,15 @@ const App = () => {
         setWikipediaData(null);
         setAssistantResponse(`Searching Wikipedia for "${query}"...`);
         try {
-            const response = await fetch(`${BACKEND_URL}/wikipedia?query=${encodeURIComponent(query)}`);
-            const data = await response.json();
-
-            if (response.ok && data.summary) {
-                setWikipediaData(data);
-                const wikipediaText = `According to Wikipedia, ${data.summary}`;
-                setAssistantResponse(wikipediaText);
-                speak(wikipediaText);
-            } else {
-                setAssistantResponse(`Sorry, I couldn't find a Wikipedia page for "${query}". ${data.error || ''}`);
-                speak(`Sorry, I couldn't find a Wikipedia page for "${query}".`);
-                setWikipediaData(null);
-            }
-        } catch (error) {
+            const data = await api.getWikipedia(query);
+            setWikipediaData(data);
+            const wikipediaText = `According to Wikipedia, ${data.summary}`;
+            setAssistantResponse(wikipediaText);
+            speak(wikipediaText);
+        } catch (error: unknown) {
             console.error("Error fetching Wikipedia data:", error);
-            setAssistantResponse("There was a problem connecting to the Wikipedia service. Please ensure the backend is running and check your internet connection.");
-            speak("There was a problem connecting to the Wikipedia service. Please ensure the backend is running and check your internet connection.");
+            setAssistantResponse(`Sorry, I couldn't find a Wikipedia page for "${query}".`);
+            speak(`Sorry, I couldn't find a Wikipedia page for "${query}".`);
             setWikipediaData(null);
         } finally {
             setLoadingWikipedia(false);
@@ -198,33 +151,21 @@ const App = () => {
         setDictionaryData(null);
         setAssistantResponse(`Looking up "${word}" in the dictionary...`);
         try {
-            const response = await fetch(`${BACKEND_URL}/dictionary?word=${encodeURIComponent(word)}`);
-            const data = await response.json();
-
-            if (response.ok && data.definitions && data.definitions.length > 0) {
-                setDictionaryData(data);
-                let textResponse = '';
-                if (data.corrected_word) {
-                    textResponse = `Did you mean "${data.corrected_word}"? The definition of ${data.corrected_word} is: `;
-                } else {
-                    textResponse = `The definition of ${data.original_word} is: `;
-                }
-                textResponse += data.definitions[0].meanings[0];
-                setAssistantResponse(textResponse);
-                speak(textResponse);
+            const data = await api.getDictionary(word);
+            setDictionaryData(data);
+            let textResponse = '';
+            if (data.corrected_word) {
+                textResponse = `Did you mean "${data.corrected_word}"? The definition of ${data.corrected_word} is: `;
             } else {
-                let errorResponse = `Sorry, I couldn't find a definition for "${word}".`;
-                if (data.suggestion) {
-                    errorResponse += ` Did you mean "${data.suggestion}"?`;
-                }
-                setAssistantResponse(errorResponse);
-                speak(errorResponse);
-                setDictionaryData(null);
+                textResponse = `The definition of ${data.original_word} is: `;
             }
-        } catch (error) {
+            textResponse += data.definitions[0].meanings[0];
+            setAssistantResponse(textResponse);
+            speak(textResponse);
+        } catch (error: unknown) {
             console.error("Error fetching dictionary data:", error);
-            setAssistantResponse("There was a problem connecting to the dictionary service. Please ensure the backend is running and check your internet connection.");
-            speak("There was a problem connecting to the dictionary service. Please ensure the backend is running and check your internet connection.");
+            setAssistantResponse(`Sorry, I couldn't find a definition for "${word}".`);
+            speak(`Sorry, I couldn't find a definition for "${word}".`);
             setDictionaryData(null);
         } finally {
             setLoadingDictionary(false);
@@ -238,10 +179,8 @@ const App = () => {
         setCurrentPlayingVideoId(null);
         setAssistantResponse(`Searching YouTube for "${query}"...`);
         try {
-            const response = await fetch(`${BACKEND_URL}/youtube/search?query=${encodeURIComponent(query)}`);
-            const data = await response.json();
-
-            if (response.ok && data.videos && data.videos.length > 0) {
+            const data = await api.searchYouTube(query);
+            if (data.videos && data.videos.length > 0) {
                 setYoutubeResults(data.videos);
                 const firstVideoTitle = data.videos[0].title;
                 setAssistantResponse(`I found "${firstVideoTitle}" and more videos on YouTube.`);
@@ -252,11 +191,11 @@ const App = () => {
                     speak(`Now playing "${firstVideoTitle}".`);
                 }
             } else {
-                setAssistantResponse(`Sorry, I couldn't find any YouTube videos for "${query}". ${data.error || ''}`);
+                setAssistantResponse(`Sorry, I couldn't find any YouTube videos for "${query}".`);
                 speak(`Sorry, I couldn't find any YouTube videos for "${query}".`);
                 setYoutubeResults([]);
             }
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Error fetching YouTube videos:", error);
             setAssistantResponse("There was a problem connecting to the YouTube service. Please ensure the backend is running and check your internet connection.");
             speak("There was a problem connecting to the YouTube service. Please ensure the backend is running and check your internet connection.");
@@ -275,31 +214,17 @@ const App = () => {
         speak(`Initiating download for video. This might take a moment.`);
 
         try {
-            const response = await fetch(`${BACKEND_URL}/youtube/download`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ url: videoUrl }),
-            });
-            const data = await response.json();
-
-            if (response.ok) {
-                setDownloadStatus(`Download successful! Click here to download:`);
-                setDownloadLink(`${BACKEND_URL}${data.download_link}`);
-                setAssistantResponse(`Video downloaded! You can now download it from the link below.`);
-                speak(`Video downloaded!`);
-            } else {
-                setDownloadStatus(`Download failed: ${data.error || 'Unknown error.'}`);
-                setAssistantResponse(`Sorry, video download failed. ${data.error || ''}`);
-                speak(`Sorry, video download failed.`);
-                setDownloadLink(null);
-            }
-        } catch (error) {
+            const data = await api.downloadYouTube(videoUrl);
+            setDownloadStatus(`Download successful! Click here to download:`);
+            setDownloadLink(`${BACKEND_URL}${data.download_link}`);
+            setAssistantResponse(`Video downloaded! You can now download it from the link below.`);
+            speak(`Video downloaded!`);
+        } catch (error: unknown) {
             console.error("Error initiating YouTube download:", error);
-            setDownloadStatus("There was a problem connecting to the download service. Please ensure the backend is running and yt-dlp is installed.");
-            setAssistantResponse("There was a problem connecting to the download service.");
-            speak("There was a problem connecting to the download service.");
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error.';
+            setDownloadStatus(`Download failed: ${errorMessage}`);
+            setAssistantResponse(`Sorry, video download failed. ${errorMessage}`);
+            speak(`Sorry, video download failed.`);
             setDownloadLink(null);
         } finally {
             setLoadingDownload(false);
@@ -309,155 +234,58 @@ const App = () => {
     // Send an email via the Python backend
     const sendEmailCommand = async (recipient: string, subject: string, body: string) => {
         setSendingEmail(true);
-        setEmailStatusMessage(null); // Clear previous status
+        setEmailStatusMessage(null);
         setAssistantResponse(`Sending email to ${recipient}...`);
         speak(`Sending email to ${recipient}...`);
         try {
-            const response = await fetch(`${BACKEND_URL}/send-email`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ recipient_email: recipient, subject: subject, body: body }),
-            });
-            const data = await response.json();
-
-            if (response.ok) {
-                setEmailStatusMessage(`Email sent successfully to ${recipient}!`);
-                setAssistantResponse(`Email sent successfully to ${recipient}!`);
-                speak(`Email sent successfully to ${recipient}!`);
-            } else {
-                setEmailStatusMessage(`Failed to send email: ${data.error || 'Unknown error.'}`);
-                setAssistantResponse(`Failed to send email: ${data.error || 'Unknown error.'}`);
-                speak(`Failed to send email: ${data.error || 'Unknown error.'}`);
-            }
-        } catch (error) {
+            void api.sendEmail(recipient, subject, body);
+            setEmailStatusMessage(`Email sent successfully to ${recipient}!`);
+            setAssistantResponse(`Email sent successfully to ${recipient}!`);
+            speak(`Email sent successfully to ${recipient}!`);
+        } catch (error: unknown) {
             console.error("Error sending email:", error);
-            setEmailStatusMessage("There was a problem connecting to the email service. Please ensure the backend is running and configured correctly.");
-            setAssistantResponse("There was a problem connecting to the email service. Please ensure the backend is running and configured correctly.");
-            speak("There was a problem connecting to the email service. Please ensure the backend is running and configured correctly.");
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error.';
+            setEmailStatusMessage(`Failed to send email: ${errorMessage}`);
+            setAssistantResponse(`Failed to send email: ${errorMessage}`);
+            speak(`Failed to send email.`);
         } finally {
             setSendingEmail(false);
         }
     };
 
-    // Initialize Firebase and set up authentication
-    useEffect(() => {
+    // Maps search from the Python backend
+    const fetchMapsSearch = async (query: string) => {
+        setLoadingMaps(true);
+        setMapsResults([]);
+        setAssistantResponse(`Searching maps for "${query}"...`);
         try {
-            const app = initializeApp(firebaseConfig);
-            const auth = getAuth(app);
-            const db = getFirestore(app);
-
-            authRef.current = auth;
-            dbRef.current = db;
-
-            const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    setUserId(user.uid);
-                    setIsAuthReady(true);
-                    console.log("Firebase Auth Ready. User ID:", user.uid);
-                } else {
-                    if (initialAuthToken) {
-                        try {
-                            await signInWithCustomToken(auth, initialAuthToken);
-                            console.log("Signed in with custom token.");
-                        } catch (error) {
-                            console.error("Error signing in with custom token:", error);
-                            try {
-                                await signInAnonymously(auth);
-                                console.log("Signed in anonymously due to custom token failure.");
-                            } catch (anonError) {
-                                console.error("Error signing in anonymously:", anonError);
-                                setAssistantResponse("Failed to authenticate with Firebase.");
-                            }
-                        }
-                    } else {
-                        try {
-                            await signInAnonymously(auth);
-                            console.log("Signed in anonymously.");
-                        } catch (error) {
-                            console.error("Error signing in anonymously:", error);
-                            setAssistantResponse("Failed to authenticate with Firebase.");
-                        }
-                    }
-                }
-            });
-
-            return () => {
-                unsubscribeAuth();
-            };
-        } catch (error) {
-            console.error("Failed to initialize Firebase:", error);
-            setAssistantResponse("Failed to initialize the application. Please check console for details.");
-        }
-    }, []);
-
-    useEffect(() => {
-        if (!SpeechRecognition) {
-            setAssistantResponse('Speech Recognition is not supported in this browser.');
-            return;
-        }
-
-        const recognition = new SpeechRecognition();
-        recognition.continuous = false;
-        recognition.interimResults = false;
-        recognition.lang = 'en-US';
-
-        recognition.onstart = () => {
-            setListening(true);
-            setSpokenText('');
-            console.log('Voice recognition started...');
-        };
-
-        recognition.onresult = (event: any) => {
-            const transcript = event.results[0][0].transcript;
-            setSpokenText(transcript);
-            processCommand(transcript);
-        };
-
-        recognition.onerror = (event: any) => {
-            console.error('Speech recognition error', event.error);
-            setListening(false);
-            setAssistantResponse('Sorry, I did not catch that. Please try again.');
-            speak('Sorry, I did not catch that. Please try again.');
-        };
-
-        recognition.onend = () => {
-            setListening(false);
-            console.log('Voice recognition ended.');
-        };
-
-        recognitionRef.current = recognition;
-
-        return () => {
-            if (recognitionRef.current) {
-                recognitionRef.current.stop();
+            const data = await api.searchMaps(query);
+            if (data.results && data.results.length > 0) {
+                setMapsResults(data.results);
+                const firstResult = data.results[0];
+                setAssistantResponse(`I found ${data.results.length} results for "${query}". The top result is ${firstResult.name}.`);
+                speak(`I found ${data.results.length} results for "${query}". The top result is ${firstResult.name}.`);
+            } else {
+                setAssistantResponse(`Sorry, I couldn't find any map results for "${query}".`);
+                speak(`Sorry, I couldn't find any map results for "${query}".`);
+                setMapsResults([]);
             }
-        };
-    }, []);
-
-    useEffect(() => {
-        if (isAuthReady && userId && dbRef.current) {
-            const todosCollectionRef = collection(dbRef.current, `artifacts/${appId}/users/${userId}/todos`);
-            const q = query(todosCollectionRef);
-
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const fetchedTodos = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                fetchedTodos.sort((a: any, b: any) => (a.createdAt?.toDate() || 0) - (b.createdAt?.toDate() || 0));
-                setTodos(fetchedTodos);
-                console.log("Todos fetched:", fetchedTodos);
-            }, (error) => {
-                console.error("Error fetching todos:", error);
-                setAssistantResponse("Failed to load your to-do list.");
-            });
-            return () => unsubscribe();
+        } catch (error: unknown) {
+            console.error("Error fetching maps data:", error);
+            setAssistantResponse("There was a problem connecting to the maps service. Please ensure the backend is running and check your internet connection.");
+            speak("There was a problem connecting to the maps service.");
+            setMapsResults([]);
+        } finally {
+            setLoadingMaps(false);
         }
-    }, [isAuthReady, userId]);
+    };
 
     const processCommand = (command: string) => {
+        setCommandHistory(prev => {
+          const updated = [command, ...prev].slice(0, 20);
+          localStorage.setItem('commandHistory', JSON.stringify(updated));
+          return updated;
+        });
         const lowerCommand = command.toLowerCase();
         let response = '';
 
@@ -470,14 +298,14 @@ const App = () => {
             const todoMatch = lowerCommand.match(/(?:add|create)\s+a\s+to\s*do\s+(?:item\s+)?(.*?)(?:\.|$)/);
             if (todoMatch && todoMatch[1]) {
                 const task = todoMatch[1].trim();
-                handleAddTodo(task);
+                addTodo(task);
                 response = `Okay, I've added "${task}" to your to-do list.`;
             } else {
                 response = "What would you like to add to your to-do list?";
             }
         } else if (lowerCommand.includes('show my todo list') || lowerCommand.includes('what are my todos')) {
             if (todos.length > 0) {
-                const todoList = todos.map((todo: any, index: number) => `${index + 1}. ${todo.task}`).join(', ');
+                const todoList = todos.map((todo: Todo, index: number) => `${index + 1}. ${todo.task}`).join(', ');
                 response = `Here are your to-do items: ${todoList}.`;
             } else {
                 response = "You don't have any to-do items yet.";
@@ -488,7 +316,7 @@ const App = () => {
                 const todoIndex = parseInt(markMatch[1]) - 1;
                 if (todoIndex >= 0 && todoIndex < todos.length) {
                     const todoId = todos[todoIndex].id;
-                    handleToggleTodo(todoId, true);
+                    toggleTodo(todoId, true);
                     response = `Okay, I've marked "${todos[todoIndex].task}" as complete.`;
                 } else {
                     response = "I couldn't find a to-do item with that number. Please specify a valid number.";
@@ -502,7 +330,7 @@ const App = () => {
                 const todoIndex = parseInt(deleteMatch[1]) - 1;
                 if (todoIndex >= 0 && todoIndex < todos.length) {
                     const todoId = todos[todoIndex].id;
-                    handleDeleteTodo(todoId);
+                    deleteTodo(todoId);
                     response = `I've removed "${todos[todoIndex].task}" from your to-do list.`;
                 } else {
                     response = "I couldn't find a to-do item with that number. Please specify a valid number.";
@@ -515,6 +343,7 @@ const App = () => {
             if (cityMatch && cityMatch[1]) {
                 const city = cityMatch[1].trim();
                 fetchWeather(city);
+                return;
             } else {
                 response = "For which city would you like to know the weather?";
                 setAssistantResponse(response);
@@ -525,8 +354,10 @@ const App = () => {
             if (queryMatch && queryMatch[1]) {
                 const query = queryMatch[1].trim();
                 fetchNews(query);
+                return;
             } else {
                 fetchNews();
+                return;
             }
         } else if (lowerCommand.includes('tell me about') || lowerCommand.includes('who is') || lowerCommand.includes('what is')) {
             let query = '';
@@ -540,6 +371,7 @@ const App = () => {
 
             if (query) {
                 fetchWikipedia(query);
+                return;
             } else {
                 response = "What topic or person would you like to know about?";
                 setAssistantResponse(response);
@@ -558,6 +390,7 @@ const App = () => {
 
             if (word) {
                 fetchDictionaryDefinition(word);
+                return;
             } else {
                 response = "Which word would you like me to define?";
                 setAssistantResponse(response);
@@ -568,6 +401,7 @@ const App = () => {
             if (queryMatch && queryMatch[1]) {
                 const query = queryMatch[1].trim();
                 fetchYouTubeVideos(query, false);
+                return;
             } else {
                 response = "What would you like to search for on YouTube?";
                 setAssistantResponse(response);
@@ -578,6 +412,7 @@ const App = () => {
             if (playMatch && playMatch[1]) {
                 const query = playMatch[1].trim();
                 fetchYouTubeVideos(query, true);
+                return;
             } else {
                 response = "What would you like me to play?";
                 setAssistantResponse(response);
@@ -591,6 +426,7 @@ const App = () => {
                 const subject = emailMatch[2].trim();
                 const body = emailMatch[3].trim();
                 sendEmailCommand(recipient, subject, body);
+                return;
             } else {
                 response = "I couldn't understand the email command. Please say 'send an email to [recipient email] with subject [subject] and message [body]'.";
                 setAssistantResponse(response);
@@ -598,9 +434,10 @@ const App = () => {
             }
         } else if (lowerCommand.includes('download youtube video')) {
             const urlMatch = lowerCommand.match(/download youtube video\s+(https?:\/\/(?:www\.)?youtube\.com\/watch\?v=|https?:\/\/youtu\.be\/)([a-zA-Z0-9_-]+)/);
-            if (urlMatch && urlMatch[0]) {
-                const videoUrl = urlMatch[0];
+            if (urlMatch && urlMatch[1] && urlMatch[2]) {
+                const videoUrl = `${urlMatch[1]}${urlMatch[2]}`;
                 handleYouTubeDownload(videoUrl);
+                return;
             } else {
                 response = "Please provide a valid YouTube video URL after 'download YouTube video'.";
                 setAssistantResponse(response);
@@ -616,25 +453,39 @@ const App = () => {
                 speak(response);
             }
         } else if (lowerCommand.includes('switch to female voice')) {
-        const femaleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('female') && voice.lang === 'en-US');
-          if (femaleVoice) {
-              response = 'Switching to a female voice.';
-              speak(response, femaleVoice.name);
-              return;
-          } else {
-              response = 'Sorry, a suitable female voice is not available.';
-          }
+            const femaleVoice = voices.find(voice => voice.lang === 'en-US' && (voice.name.toLowerCase().includes('zira') || voice.name.toLowerCase().includes('samantha') || voice.name.toLowerCase().includes('karen') || voice.name.toLowerCase().includes('moira') || voice.name.toLowerCase().includes('tessa') || voice.name.toLowerCase().includes('google') && voice.localService));
+            if (femaleVoice) {
+                response = 'Switching to a female voice.';
+                speak(response, femaleVoice.name);
+                return;
+            } else {
+                const anyEnVoice = voices.find(voice => voice.lang === 'en-US');
+                if (anyEnVoice) {
+                    response = 'Switching to a female voice.';
+                    speak(response, anyEnVoice.name);
+                    return;
+                }
+                response = 'Sorry, a suitable female voice is not available.';
+            }
         } else if (lowerCommand.includes('switch to male voice')) {
-            const maleVoice = availableVoices.find(voice => voice.name.toLowerCase().includes('male') && voice.lang === 'en-US');
+            const maleVoice = voices.find(voice => voice.lang === 'en-US' && (voice.name.toLowerCase().includes('david') || voice.name.toLowerCase().includes('daniel') || voice.name.toLowerCase().includes('james') || voice.name.toLowerCase().includes('google') && voice.localService && !voice.name.toLowerCase().includes('zira') && !voice.name.toLowerCase().includes('samantha')));
             if (maleVoice) {
                 response = 'Switching to a male voice.';
                 speak(response, maleVoice.name);
                 return;
             } else {
+                const anyEnVoice = voices.find(voice => voice.lang === 'en-US');
+                if (anyEnVoice) {
+                    response = 'Switching to a male voice.';
+                    speak(response, anyEnVoice.name);
+                    return;
+                }
                 response = 'Sorry, a suitable male voice is not available.';
             }
         } else if (lowerCommand.includes('open website')) {
-            const urlMatch = lowerCommand.match(/open website (.*?)(?:\.|$)/);
+            let urlCommand = lowerCommand.replace('open website', '').trim();
+            urlCommand = urlCommand.replace(/ dot /g, '.').replace(/ dot$/g, '.');
+            const urlMatch = urlCommand.match(/(.+?)(?:\s*$)/);
             if (urlMatch && urlMatch[1]) {
                 let url = urlMatch[1].trim();
                 if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -652,6 +503,24 @@ const App = () => {
             }
             setAssistantResponse(response);
             speak(response);
+        } else if (lowerCommand.includes('find') || lowerCommand.includes('search for') || lowerCommand.includes('maps')) {
+            let query = '';
+            if (lowerCommand.includes('find')) {
+                query = lowerCommand.replace('find', '').trim();
+            } else if (lowerCommand.includes('search for')) {
+                query = lowerCommand.replace('search for', '').trim();
+            } else if (lowerCommand.includes('maps')) {
+                query = lowerCommand.replace('maps', '').trim();
+            }
+            query = query.replace(/ near me/g, '').replace(/ on maps/g, '').trim();
+            if (query) {
+                fetchMapsSearch(query);
+                return;
+            } else {
+                response = "What would you like to search for on maps?";
+                setAssistantResponse(response);
+                speak(response);
+            }
         }  else {
             response = `I understand you said "${command}". I am still learning, but for now, I can tell time and manage your to-do list.`;
         }
@@ -662,18 +531,12 @@ const App = () => {
 
     // Start listening
     const startListening = () => {
-        if (recognitionRef.current) {
-            recognitionRef.current.start();
-        } else {
-            setAssistantResponse("Speech recognition not ready. Please try again.");
-        }
+        startRecognition();
     };
 
     // Stop listening
     const stopListening = () => {
-        if (recognitionRef.current) {
-            recognitionRef.current.stop();
-        }
+        stopRecognition();
     };
 
      const playVideo = (videoId: string) => {
@@ -687,68 +550,20 @@ const App = () => {
         setAssistantResponse("Video player closed.");
     };
 
-    // Firestore CRUD operations for Todo List
-    const handleAddTodo = async (taskText: string) => {
-        if (!userId || !dbRef.current) {
-            setAssistantResponse("Authentication not ready. Cannot add to-do.");
-            return;
-        }
-        if (!taskText.trim()) {
-            setAssistantResponse("To-do task cannot be empty.");
-            return;
-        }
-        try {
-            const todosCollectionRef = collection(dbRef.current, `artifacts/${appId}/users/${userId}/todos`);
-            await addDoc(todosCollectionRef, {
-                task: taskText.trim(),
-                completed: false,
-                createdAt: new Date(),
-            });
-            setNewTodo('');
-            setAssistantResponse("To-do added successfully!");
-        } catch (error) {
-            console.error("Error adding to-do:", error);
-            setAssistantResponse("Failed to add to-do.");
-        }
-    };
-
-    const handleToggleTodo = async (id: string, completed: boolean) => {
-        if (!userId || !dbRef.current) {
-            setAssistantResponse("Authentication not ready. Cannot update to-do.");
-            return;
-        }
-        try {
-            const todoDocRef = doc(dbRef.current, `artifacts/${appId}/users/${userId}/todos`, id);
-            await updateDoc(todoDocRef, { completed: completed });
-            setAssistantResponse("To-do updated!");
-        } catch (error) {
-            console.error("Error updating to-do:", error);
-            setAssistantResponse("Failed to update to-do.");
-        }
-    };
-
-    const handleDeleteTodo = async (id: string) => {
-        if (!userId || !dbRef.current) {
-            setAssistantResponse("Authentication not ready. Cannot delete to-do.");
-            return;
-        }
-        try {
-            const todoDocRef = doc(dbRef.current, `artifacts/${appId}/users/${userId}/todos`, id);
-            await deleteDoc(todoDocRef);
-            setAssistantResponse("To-do deleted!");
-        } catch (error) {
-            console.error("Error deleting to-do:", error);
-            setAssistantResponse("Failed to delete to-do.");
-        }
-    };
-
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 text-white flex flex-col items-center justify-center p-4 font-inter">
             <div className="w-full max-w-4xl bg-gray-800 bg-opacity-70 backdrop-blur-sm rounded-xl shadow-2xl p-6 md:p-8">
-                {/* User ID display */}
-                {userId && (
-                    <div className="text-sm text-gray-400 mb-4 break-words">
-                        User ID: <span className="font-mono text-blue-300">{userId}</span>
+                {/* Command History */}
+                {commandHistory.length > 0 && (
+                    <div className="bg-gray-800 bg-opacity-50 rounded-xl p-4 mb-8 shadow-xl border border-gray-600">
+                        <h3 className="text-sm font-semibold text-gray-400 mb-2">Recent Commands</h3>
+                        <div className="flex flex-wrap gap-2">
+                            {commandHistory.slice(0, 5).map((cmd, idx) => (
+                                <span key={idx} className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-full">
+                                    {cmd}
+                                </span>
+                            ))}
+                        </div>
                     </div>
                 )}
 
@@ -758,7 +573,7 @@ const App = () => {
                         AI Voice Assistant
                     </h1>
                     <div className="text-lg text-center text-gray-200 min-h-[4rem] flex items-center justify-center">
-                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary || loadingYouTube || sendingEmail || loadingDownload ? (
+                        {loadingWeather || loadingNews || loadingWikipedia || loadingDictionary || loadingYouTube || sendingEmail || loadingDownload || loadingMaps ? (
                             <div className="flex items-center space-x-2">
                                 <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -775,7 +590,7 @@ const App = () => {
                     </div> */}
                     {spokenText && (
                         <div className="text-sm text-center text-gray-400 mt-2 italic">
-                            You said: "{sanitizeText(spokenText)}"
+                            You said: &quot;{sanitizeText(spokenText)}&quot;
                         </div>
                     )}
                 </div>
@@ -833,8 +648,8 @@ const App = () => {
                     <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
                         <h2 className="text-2xl font-bold mb-4 text-center text-cyan-300">Latest News</h2>
                         <ul className="space-y-4">
-                            {newsArticles.map((article: any, index: number) => (
-                                <li key={index} className="bg-gray-800 p-4 rounded-lg shadow-inner">
+                            {newsArticles.map((article: NewsArticle, _index: number) => (
+                                <li key={_index} className="bg-gray-800 p-4 rounded-lg shadow-inner">
                                     <h3 className="text-xl font-semibold text-blue-200 mb-1">{sanitizeText(article.title)}</h3>
                                     {article.source && <p className="text-sm text-gray-400 mb-2">Source: {sanitizeText(article.source)}</p>}
                                     {article.description && <p className="text-gray-300 text-base">{sanitizeText(article.description)}</p>}
@@ -889,8 +704,8 @@ const App = () => {
                                 </span>
                             )}
                         </h2>
-                        {dictionaryData.definitions.map((defGroup: any, defIndex: number) => (
-                            <div key={defIndex} className="mb-4 last:mb-0">
+                        {dictionaryData.definitions.map((defGroup: DictionaryDefinition, _defIndex: number) => (
+                            <div key={_defIndex} className="mb-4 last:mb-0">
                                 <h3 className="text-xl font-semibold text-gray-200 mb-2">
                                     {sanitizeText(defGroup.part_of_speech)}:
                                 </h3>
@@ -932,7 +747,7 @@ const App = () => {
                     <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
                         <h2 className="text-2xl font-bold mb-4 text-center text-pink-300">YouTube Search Results</h2>
                         <ul className="space-y-4">
-                            {youtubeResults.map((video: any, index: number) => (
+                            {youtubeResults.map((video: YouTubeVideo) => (
                                 <li key={video.id} className="bg-gray-800 p-4 rounded-lg shadow-inner flex flex-col md:flex-row items-center space-y-3 md:space-y-0 md:space-x-4">
                                     {video.thumbnail && (
                                         <img
@@ -989,6 +804,36 @@ const App = () => {
                     </div>
                 )}
 
+                {/* Maps Search Results */}
+                {mapsResults.length > 0 && (
+                    <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600 mb-8">
+                        <h2 className="text-2xl font-bold mb-4 text-center text-yellow-300">Map Search Results</h2>
+                        <ul className="space-y-4">
+                            {mapsResults.map((place: MapsResult, _index: number) => (
+                                <li key={_index} className="bg-gray-800 p-4 rounded-lg shadow-inner">
+                                    <h3 className="text-xl font-semibold text-yellow-200 mb-1">{sanitizeText(place.name)}</h3>
+                                    {place.address && <p className="text-sm text-gray-400 mb-2">{sanitizeText(place.address)}</p>}
+                                    {place.rating && (
+                                        <p className="text-gray-300 text-base">
+                                            Rating: {place.rating} ({place.user_ratings_total} reviews)
+                                        </p>
+                                    )}
+                                    {place.map_url && (
+                                        <a
+                                            href={place.map_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-blue-400 hover:underline mt-2 inline-block text-sm"
+                                        >
+                                            View on Google Maps
+                                        </a>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
                 {/* To-Do List Section */}
                 <div className="bg-gray-700 bg-opacity-50 rounded-xl p-6 shadow-xl border border-gray-600">
                     <h2 className="text-2xl font-bold mb-4 text-center text-teal-300">Your To-Do List</h2>
@@ -1001,12 +846,13 @@ const App = () => {
                             onChange={(e) => setNewTodo(e.target.value)}
                             onKeyPress={(e) => {
                                 if (e.key === 'Enter') {
-                                    handleAddTodo(newTodo);
+                                    addTodo(newTodo);
+                                    setNewTodo('');
                                 }
                             }}
                         />
                         <button
-                            onClick={() => handleAddTodo(newTodo)}
+                            onClick={() => { addTodo(newTodo); setNewTodo(''); }}
                             className="px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-semibold transition-transform transform hover:scale-105 active:scale-95 shadow-md"
                         >
                             Add To-Do
@@ -1017,7 +863,7 @@ const App = () => {
                         <p className="text-center text-gray-400 italic">No to-do items yet. Try adding one!</p>
                     ) : (
                         <ul className="space-y-3">
-                            {todos.map((todo: any, index: number) => (
+                            {todos.map((todo: Todo, _index: number) => (
                                 <li
                                     key={todo.id}
                                     className={`flex items-center justify-between p-4 rounded-lg shadow-md transition-all duration-200 ${
@@ -1025,11 +871,11 @@ const App = () => {
                                     }`}
                                 >
                                     <span className="flex-grow text-lg">
-                                        {index + 1}. {sanitizeText(todo.task)}
+                                        {_index + 1}. {sanitizeText(todo.task)}
                                     </span>
                                     <div className="flex space-x-2">
                                         <button
-                                            onClick={() => handleToggleTodo(todo.id, !todo.completed)}
+                                            onClick={() => toggleTodo(todo.id, !todo.completed)}
                                             className={`p-2 rounded-full ${
                                                 todo.completed
                                                     ? 'bg-yellow-500 hover:bg-yellow-600'
@@ -1040,11 +886,11 @@ const App = () => {
                                             {todo.completed ? (
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-rotate-ccw"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
                                             ) : (
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-check-circle"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-check-circle"><path d="M22 11.08V12a10 10 0 1 11-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
                                             )}
                                         </button>
                                         <button
-                                            onClick={() => handleDeleteTodo(todo.id)}
+                                            onClick={() => deleteTodo(todo.id)}
                                             className="p-2 rounded-full bg-red-500 hover:bg-red-600 text-white transition-transform transform hover:scale-110 active:scale-90 shadow-sm"
                                             title="Delete To-Do"
                                         >
